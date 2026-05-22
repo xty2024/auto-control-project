@@ -11,12 +11,14 @@
             "id": "9f9f1402513878e8",
             "type": "leaf",
             "state": {
-              "type": "pdf",
+              "type": "markdown",
               "state": {
-                "file": "Computatinal physics.pdf"
+                "file": "未命名.md",
+                "mode": "source",
+                "source": false
               },
-              "icon": "lucide-file-text",
-              "title": "Computatinal physics"
+              "icon": "lucide-file",
+              "title": "未命名"
             }
           }
         ]
@@ -191,12 +193,12 @@
   },
   "active": "9f9f1402513878e8",
   "lastOpenFiles": [
-    "未命名.base",
+    "未命名.md",
     "Computatinal physics.pdf",
+    "未命名",
+    "未命名.base",
     "未命名.canvas",
     "欢迎.md",
-    "未命名.md",
-    "未命名 1",
-    "未命名"
+    "未命名 1"
   ]
 }
