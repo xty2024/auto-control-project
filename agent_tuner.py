@@ -1,7 +1,5 @@
 """
 LLM Agent for PID auto-tuning (a/b/c/d)
-Compatible with DeepSeek API, openai>=1.0.0
-Author: Group Member 3
 """
 
 import sys
@@ -24,7 +22,7 @@ except:
 # ============================================
 # DeepSeek API
 # ============================================
-DEEPSEEK_API_KEY = "你的apikey"
+DEEPSEEK_API_KEY = "your APIKEY"
 
 MODEL_NAME = "deepseek-chat"
 
@@ -101,25 +99,111 @@ def is_satisfied(problem, metrics, tol=1e-6):
 
 
 # ============================================
+# 安全 step_info
+# ============================================
+def safe_metrics(metrics):
+
+    new_metrics = {}
+
+    for k, v in metrics.items():
+
+        try:
+
+            if np.isnan(v):
+                new_metrics[k] = 1e9
+            elif np.isinf(v):
+                new_metrics[k] = 1e9
+            else:
+                new_metrics[k] = float(v)
+
+        except:
+            new_metrics[k] = v
+
+    return new_metrics
+
+
+# ============================================
 # 评估
 # ============================================
 def evaluate(problem, params):
 
-    if problem == 'a':
-        metrics = evaluate_problem_1_pd(params[0], params[1])
+    try:
 
-    elif problem == 'b':
-        metrics = evaluate_problem_2_pi(params[0], params[1])
+        # =========================
+        # Problem a
+        # env_simulator 里只接受 Kd
+        # =========================
+        if problem == 'a':
 
-    elif problem == 'c':
-        metrics = evaluate_problem_3_pid(params[0], params[1], params[2])
+            Kd = float(params[0])
 
-    else:
-        metrics = evaluate_problem_4_pid_freq(
-            params[0],
-            params[1],
-            params[2]
-        )
+            metrics = evaluate_problem_1_pd(Kd)
+
+        # =========================
+        # Problem b
+        # =========================
+        elif problem == 'b':
+
+            metrics = evaluate_problem_2_pi(
+                float(params[0]),
+                float(params[1])
+            )
+
+        # =========================
+        # Problem c
+        # =========================
+        elif problem == 'c':
+
+            metrics = evaluate_problem_3_pid(
+                float(params[0]),
+                float(params[1]),
+                float(params[2])
+            )
+
+        # =========================
+        # Problem d
+        # =========================
+        else:
+
+            metrics = evaluate_problem_4_pid_freq(
+                float(params[0]),
+                float(params[1]),
+                float(params[2])
+            )
+
+        metrics = safe_metrics(metrics)
+
+    except Exception as e:
+
+        print("系统评估失败:", e)
+
+        # 返回一个极差指标
+        if problem == 'a':
+
+            metrics = {
+                "overshoot": 1e9,
+                "tr": 1e9,
+                "ts": 1e9,
+                "e_ss_ramp": 1e9
+            }
+
+        elif problem in ['b', 'c']:
+
+            metrics = {
+                "overshoot": 1e9,
+                "tr": 1e9,
+                "ts": 1e9,
+                "e_ss_acc": 1e9
+            }
+
+        else:
+
+            metrics = {
+                "e_ss_acc": 1e9,
+                "phase_margin": 0,
+                "Mr": 1e9,
+                "BW": 0
+            }
 
     files = [
         os.path.join(SIM_RESULT_DIR, f)
@@ -162,38 +246,28 @@ def heuristic_tune(problem, last_params, last_metrics):
 
     # ====================================
     # Problem a
+    # 这里只调 Kd
     # ====================================
     if problem == 'a':
 
-        Kp, Kd = last_params
+        Kd = float(last_params[0])
 
         tr = float(last_metrics.get('tr', 1))
         ts = float(last_metrics.get('ts', 1))
         ov = float(last_metrics.get('overshoot', 0))
-        ess = float(last_metrics.get('e_ss_ramp', 1))
 
-        # 加速系统
         if tr > 0.005:
-            Kp *= 2.5
-
-        # 缩短调节时间
-        if ts > 0.005:
-            Kp *= 2.0
-            Kd *= 1.3
-
-        # 抑制超调
-        if ov > 5:
             Kd *= 1.8
-            Kp *= 0.9
 
-        # 降低稳态误差
-        if ess > 0.000443:
-            Kp *= 1.5
+        if ts > 0.005:
+            Kd *= 1.5
 
-        Kp = np.clip(Kp, 0.1, 5000)
-        Kd = np.clip(Kd, 0.01, 1000)
+        if ov > 5:
+            Kd *= 2.0
 
-        return [float(Kp), float(Kd)]
+        Kd = np.clip(Kd, 0.0001, 500)
+
+        return [float(Kd)]
 
     # ====================================
     # Problem b
@@ -202,9 +276,9 @@ def heuristic_tune(problem, last_params, last_metrics):
 
         Kp, Ki = last_params
 
-        tr = last_metrics.get('tr', 1)
-        ov = last_metrics.get('overshoot', 0)
-        ess = last_metrics.get('e_ss_acc', 1)
+        tr = float(last_metrics.get('tr', 1))
+        ov = float(last_metrics.get('overshoot', 0))
+        ess = float(last_metrics.get('e_ss_acc', 1))
 
         if tr > 0.01:
             Kp *= 1.4
@@ -265,36 +339,19 @@ def heuristic_tune(problem, last_params, last_metrics):
         mr = float(last_metrics.get('Mr', 10))
         ess = float(last_metrics.get('e_ss_acc', 1))
 
-        # BW 不够
         if bw < 1000:
+            Kp *= 1.15
+            Kd *= 1.10
 
-            ratio = (1000 - bw) / 1000
-
-            Kp *= (1.2 + ratio)
-            Kd *= (1.15 + 0.5 * ratio)
-
-        # 相位裕度不够
         if pm < 70:
+            Kd *= 1.25
 
-            ratio = (70 - pm) / 70
-
-            Kp *= (0.92 - 0.1 * ratio)
-            Kd *= (1.15 + ratio)
-
-        # Mr 太大
         if mr > 1.1:
+            Kd *= 1.20
+            Kp *= 0.92
 
-            ratio = mr - 1.1
-
-            Kp *= (0.90 - 0.05 * ratio)
-            Kd *= (1.20 + 0.2 * ratio)
-
-        # 稳态误差太大
         if ess > 0.2:
-
-            ratio = ess / 0.2
-
-            Ki *= (1.15 + 0.1 * ratio)
+            Ki *= 1.20
 
         Kp = np.clip(Kp, 1, 800)
         Ki = np.clip(Ki, 0.1, 300)
@@ -309,13 +366,16 @@ def heuristic_tune(problem, last_params, last_metrics):
 def ask_llm_for_params(problem, history):
 
     if not USE_LLM:
+
         return heuristic_tune(
             problem,
             history[-1]['params'],
             history[-1]['metrics']
         )
 
-    system_prompt = f"""
+    try:
+
+        system_prompt = f"""
 你是 PID 控制专家。
 
 问题类型: {problem}
@@ -323,31 +383,20 @@ def ask_llm_for_params(problem, history):
 规格要求:
 {get_specs_text(problem)}
 
-请根据历史记录输出下一组参数。
+请输出下一组参数。
 
-只允许输出 JSON。
-
-问题a:
-{{"Kp": xxx, "Kd": xxx}}
-
-问题b:
-{{"Kp": xxx, "Ki": xxx}}
-
-问题c/d:
-{{"Kp": xxx, "Ki": xxx, "Kd": xxx}}
+只能输出 JSON。
 """
 
-    user_msg = ""
+        user_msg = ""
 
-    for h in history:
+        for h in history:
 
-        user_msg += f"""
+            user_msg += f"""
 迭代 {h['iteration']}
 参数: {h['params']}
 指标: {h['metrics']}
 """
-
-    try:
 
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -355,13 +404,12 @@ def ask_llm_for_params(problem, history):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_msg}
             ],
-            temperature=0.4,
-            max_tokens=200
+            temperature=0.3,
+            max_tokens=100
         )
 
         reply = response.choices[0].message.content.strip()
 
-        # 安全 JSON 解析
         start = reply.find("{")
         end = reply.rfind("}")
 
@@ -373,8 +421,7 @@ def ask_llm_for_params(problem, history):
         if problem == 'a':
 
             return [
-                float(data.get("Kp", 1.0)),
-                float(data.get("Kd", 0.1))
+                float(data.get("Kd", 0.05))
             ]
 
         elif problem == 'b':
@@ -408,9 +455,8 @@ def ask_llm_for_params(problem, history):
 # ============================================
 def tune_pid(problem, max_iter=12, verbose=True):
 
-    # 初始参数
     if problem == 'a':
-        params = [1.0, 0.05]
+        params = [0.05]
 
     elif problem == 'b':
         params = [1.0, 0.5]
@@ -442,22 +488,19 @@ def tune_pid(problem, max_iter=12, verbose=True):
             'img_path': img_path
         })
 
-        if verbose:
+        print("\n============================")
+        print(f"迭代 {i+1}")
+        print("============================")
 
-            print("\n============================")
-            print(f"迭代 {i+1}")
-            print("============================")
+        print("参数:", params)
 
-            print("参数:", params)
+        print("指标:")
 
-            print("指标:")
+        for k, v in metrics.items():
+            print(f"{k}: {v}")
 
-            for k, v in metrics.items():
-                print(f"{k}: {v}")
+        print("达标:", satisfied)
 
-            print("达标:", satisfied)
-
-        # 达标
         if satisfied:
 
             best_params = params.copy()
@@ -466,48 +509,14 @@ def tune_pid(problem, max_iter=12, verbose=True):
 
             break
 
-        # 保存最好结果
         if best_metrics is None:
-
             best_metrics = metrics
             best_params = params.copy()
 
-        else:
-
-            if problem != 'd':
-
-                if metrics.get('ts', 1e9) < best_metrics.get('ts', 1e9):
-
-                    best_metrics = metrics
-                    best_params = params.copy()
-
-            else:
-
-                score_new = (
-                    metrics.get('BW', 0)
-                    - 50 * max(0, metrics.get('Mr', 10) - 1.1)
-                    + metrics.get('phase_margin', 0)
-                )
-
-                score_old = (
-                    best_metrics.get('BW', 0)
-                    - 50 * max(0, best_metrics.get('Mr', 10) - 1.1)
-                    + best_metrics.get('phase_margin', 0)
-                )
-
-                if score_new > score_old:
-
-                    best_metrics = metrics
-                    best_params = params.copy()
-
-        # LLM 调参
         params = ask_llm_for_params(problem, history)
 
         params = [max(0.0, float(p)) for p in params]
 
-    # ============================================
-    # 保存结果图
-    # ============================================
     fig_dir = "agent_figures"
 
     os.makedirs(fig_dir, exist_ok=True)
